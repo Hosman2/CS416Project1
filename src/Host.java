@@ -2,6 +2,7 @@ import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 import java.util.Scanner;
 
 public class Host {
@@ -80,7 +81,7 @@ public class Host {
         String dst = parts[1];
         String payload = parts[2];
 
-        System.out.println("\n[RECEIVED @ " +hostId + "] from" + src + ": " + payload);
+        System.out.println("\n[RECEIVED @ " +hostId + "] from " + src + ": " + payload);
 
         // If the frame wasn't actually for me, it arrived via flooding.
         if (!dst.equals(hostId)) {
@@ -101,21 +102,31 @@ public class Host {
     }
 
     public static void main(String[] args) throws Exception {
-        if(args.length !=4 ){
-            System.out.println("Usage: java Host <HostID> <listenPort> <switchIP> <switchPort>");
+        if (args.length != 1) {
+            System.out.println("Usage: java Host <HostID>");
             return;
         }
+
         String hostId = args[0];
-        int listenPort = Integer.parseInt(args[1]);
-        String switchIp = args[2];
-        int switchPort = Integer.parseInt(args[3]);
 
-        InetSocketAddress swAddr = new InetSocketAddress(switchIp, switchPort);
+        Parser parser = new Parser("Config");
 
-        Host host = new Host(hostId, listenPort, swAddr);
+        InetSocketAddress myAddr = parser.getAddress(hostId);
+        if (myAddr == null) {
+            System.out.println("Host ID not found in config: " + hostId);
+            return;
+        }
+
+        // Host should only have one neighbor (the connected switch)
+        List<InetSocketAddress> neighbors = parser.getNeighbors(hostId);
+        if (neighbors.isEmpty()) {
+            System.out.println("No neighbor switch found for host: " + hostId);
+            return;
+        }
+        InetSocketAddress neighborSwitch = neighbors.get(0);
+
+        Host host = new Host(hostId, myAddr.getPort(), neighborSwitch);
         host.start();
     }
-
-
 
 }

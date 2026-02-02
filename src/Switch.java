@@ -1,10 +1,8 @@
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.InetSocketAddress;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.Scanner;
 import java.util.concurrent.ConcurrentHashMap;
 
 public class Switch {
@@ -124,15 +122,23 @@ public class Switch {
 
         String switchId = args[0];
 
+        //Use parser on the config file
+        Parser parser = new Parser("Config");
+        // Get switch's IP + port
+        InetSocketAddress myAddress = parser.getAddress(switchId);
 
-        int listenPort = 5001;
-
-        List<InetSocketAddress> neighbors = new ArrayList<>();
-        neighbors.add(new InetSocketAddress("127.0.0.1", 6001)); // Host A
-        neighbors.add(new InetSocketAddress("127.0.0.1", 6002)); // Host B
-        neighbors.add(new InetSocketAddress("127.0.0.1", 5002)); // Switch S2
-
-        Switch sw = new Switch(switchId, listenPort, neighbors);
+        if (myAddress == null) {
+            System.out.println("Switch ID not found in config: " + switchId);
+            return;
+        }
+        // Get all neighbors
+        List<InetSocketAddress> neighbors = parser.getNeighbors(switchId);
+        // Create and start switch
+        Switch sw = new Switch(
+                switchId,
+                myAddress.getPort(),
+                neighbors
+        );
         sw.start();
     }
 }
