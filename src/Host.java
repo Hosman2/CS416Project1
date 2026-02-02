@@ -82,8 +82,8 @@ public class Host {
         String payload = parts[2];
 
         // If the frame wasn't actually for me, it arrived via flooding.
-        if (dst.equals(hostId)) {
-            System.out.println("\n[RECEIVED @ " +hostId + "] from " + src + ": " + payload);
+        if (dst.equals(this.hostId)) {
+            System.out.println("\n[RECEIVED @ " + hostId + "] from " + src + ": " + payload);
         } else {
             System.out.println("[DEBUG] Destination MAC mismatch (flooded frame). " +
                     "Frame dst=" + dst + ", myMAC=" +hostId);
