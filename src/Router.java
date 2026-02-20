@@ -85,9 +85,14 @@ public class Router {
 
         ForwardingEntry entry = forwardingTable.get(destSubnet);
 
+        String srcNet = srcIP.substring(0,4);
+        String destNet = destIP.substring(0,4);
         if (destMAC.equals(routerId)) {
             System.out.println("\n[RECEIVED @ " + routerId + "] from " + srcMAC +
                     " (" + srcIP + " -> " + destIP + "): " + message);
+        } else if (srcNet.equals(destNet)) {
+            System.out.println("\n[DEBUG] Message Received and Ignored. dstMAC=" + destMAC + ", myMAC=" + routerId +
+                    " | srcMAC=" + srcMAC + " srcVIP=" + srcIP + " dstVIP=" + destIP);
         } else {
             System.out.println("\n[DEBUG] Message Ignored. dstMAC=" + destMAC + ", myMAC=" + routerId +
                     " | srcMAC=" + srcMAC + " srcVIP=" + srcIP + " dstVIP=" + destIP);
