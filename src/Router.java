@@ -150,17 +150,30 @@ public class Router {
 
     public static void main(String[] args) throws Exception {
 
-        if (args.length != 2) {
-            System.out.println("Usage: Router <ID> <Port>");
+        if (args.length != 1) {
+            System.out.println("Usage: Router <ID>");
             return;
         }
 
         String id = args[0];
-        int port = Integer.parseInt(args[1]);
 
-        Router router = new Router(id, port);
+        Parser parser = new Parser("Config");
 
-        // neighbors should be added after config parsing
+        InetSocketAddress myAddr = parser.getAddress(id);
+        if (myAddr == null) {
+            System.out.println("Router ID not found in config: " + id);
+            return;
+        }
+
+        Router router = new Router(id, myAddr.getPort());
+
+        // Add neighbors from parser
+        for (String neighborId : parser.getNeighborIds(id)) {
+            InetSocketAddress addr = parser.getAddress(neighborId);
+            router.addNeighbor(neighborId,
+                    addr.getAddress().getHostAddress(),
+                    addr.getPort());
+        }
 
         router.start();
     }

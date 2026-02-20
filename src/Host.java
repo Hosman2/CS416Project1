@@ -126,8 +126,9 @@ public class Host {
     }
 
     public static void main(String[] args) throws Exception {
-        if (args.length != 1 && args.length != 3) {
-            System.out.println("Usage: java Host <HostID> [<MyVirtualIP> <GatewayVirtualIP>]");
+
+        if (args.length != 1) {
+            System.out.println("Usage: java Host <HostID>");
             return;
         }
 
@@ -135,12 +136,14 @@ public class Host {
 
         Parser parser = new Parser("Config");
 
+        // Get  IP and port
         InetSocketAddress myAddr = parser.getAddress(hostId);
         if (myAddr == null) {
             System.out.println("Host ID not found in config: " + hostId);
             return;
         }
 
+        // Get neighbor switch
         List<InetSocketAddress> neighbors = parser.getNeighbors(hostId);
         if (neighbors.isEmpty()) {
             System.out.println("No neighbor switch found for host: " + hostId);
@@ -148,23 +151,23 @@ public class Host {
         }
         InetSocketAddress neighborSwitch = neighbors.get(0);
 
-        String myVirtualIp;
-        String gatewayVirtualIp;
+        // Get virtual IP and gateway from parser
+        String myVirtualIp = parser.getHostVirtualIp(hostId);
+        String gatewayVirtualIp = parser.getGatewayVirtualIp(hostId);
 
-        if (args.length == 3) {
-            // Works NOW, no Parser changes required
-            myVirtualIp = args[1];
-            gatewayVirtualIp = args[2];
-        } else {
-            // myVirtualIp = parser.getVirtualIp(hostId);
-            // gatewayVirtualIp = parser.getGatewayVirtualIp(hostId);
-
-            System.out.println("Parser virtual IP methods not integrated yet.");
-            System.out.println("Run with: java Host " + hostId + " <MyVirtualIP> <GatewayVirtualIP>");
+        if (myVirtualIp == null || gatewayVirtualIp == null) {
+            System.out.println("Virtual IP or Gateway not configured for host: " + hostId);
             return;
         }
 
-        Host host = new Host(hostId, myAddr.getPort(), neighborSwitch, myVirtualIp, gatewayVirtualIp);
+        Host host = new Host(
+                hostId,
+                myAddr.getPort(),
+                neighborSwitch,
+                myVirtualIp,
+                gatewayVirtualIp
+        );
+
         host.start();
     }
 }

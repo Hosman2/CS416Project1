@@ -115,6 +115,7 @@ public class Switch {
     }
 
     public static void main(String[] args) throws Exception {
+
         if (args.length != 1) {
             System.out.println("Usage: java Switch <SwitchID>");
             return;
@@ -122,23 +123,22 @@ public class Switch {
 
         String switchId = args[0];
 
-        //Use parser on the config file
         Parser parser = new Parser("Config");
-        // Get switch's IP + port
-        InetSocketAddress myAddress = parser.getAddress(switchId);
 
+        InetSocketAddress myAddress = parser.getAddress(switchId);
         if (myAddress == null) {
             System.out.println("Switch ID not found in config: " + switchId);
             return;
         }
-        // Get all neighbors
+
         List<InetSocketAddress> neighbors = parser.getNeighbors(switchId);
-        // Create and start switch
+
         Switch sw = new Switch(
                 switchId,
                 myAddress.getPort(),
                 neighbors
         );
+
         sw.start();
     }
 }
