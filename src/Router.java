@@ -67,6 +67,10 @@ public class Router {
     private void processFrame(String frame) throws Exception {
 
         String[] parts = frame.split(":", 5);
+        if (parts.length != 5) {
+            System.out.println("\n[DEBUG] Malformed frame (expected 5 fields): " + frame);
+            return;
+        }
 
         String srcMAC = parts[0];
         String destMAC = parts[1];
@@ -81,9 +85,12 @@ public class Router {
 
         ForwardingEntry entry = forwardingTable.get(destSubnet);
 
-        if (entry == null) {
-            System.out.println("No route to subnet " + destSubnet);
-            return;
+        if (destMAC.equals(routerId)) {
+            System.out.println("\n[RECEIVED @ " + routerId + "] from " + srcMAC +
+                    " (" + srcIP + " -> " + destIP + "): " + message);
+        } else {
+            System.out.println("\n[DEBUG] Message Ignored. dstMAC=" + destMAC + ", myMAC=" + routerId +
+                    " | srcMAC=" + srcMAC + " srcVIP=" + srcIP + " dstVIP=" + destIP);
         }
 
         String nextHopId;
