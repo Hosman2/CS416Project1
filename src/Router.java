@@ -33,16 +33,15 @@ public class Router {
 
     private void loadForwardingTable() {
 
-
         if (routerId.equals("R1")) {
             forwardingTable.put("net1", new ForwardingEntry("S1", null));
-            forwardingTable.put("net2", new ForwardingEntry("S1", null));
+            forwardingTable.put("net2", new ForwardingEntry("R2", null));
             forwardingTable.put("net3", new ForwardingEntry(null, "net2.R2"));
         }
 
         if (routerId.equals("R2")) {
             forwardingTable.put("net3", new ForwardingEntry("S2", null));
-            forwardingTable.put("net2", new ForwardingEntry("S2", null));
+            forwardingTable.put("net2", new ForwardingEntry("R1", null));
             forwardingTable.put("net1", new ForwardingEntry(null, "net2.R1"));
         }
     }
@@ -81,21 +80,29 @@ public class Router {
         System.out.println("\nRouter " + routerId + " RECEIVED:");
         printFrame(srcMAC, destMAC, srcIP, destIP, message);
 
-        String destSubnet = destIP.split("\\.")[0];
+        // Ignore flooded frames not addressed to this router
+        if (!destMAC.equals(routerId)) {
+            System.out.println("\n[DEBUG] Router " + routerId + " ignoring flooded frame dstMAC=" + destMAC);
+            return;
+        }
 
-        ForwardingEntry entry = forwardingTable.get(destSubnet);
+        if (!srcIP.contains(".") || !destIP.contains(".")) {
+            System.out.println("\n[DEBUG] Invalid VIP format. srcIP=" + srcIP + " destIP=" + destIP);
+            return;
+        }
 
-        String srcNet = srcIP.substring(0,4);
-        String destNet = destIP.substring(0,4);
-        if (srcNet.equals(destNet)) {
-            System.out.println("\n[DEBUG] Message Received and Ignored. dstMAC=" + destMAC + ", myMAC=" + routerId +
-                    " | srcMAC=" + srcMAC + " srcVIP=" + srcIP + " dstVIP=" + destIP);
-        } else if (destMAC.equals(routerId)) {
-            System.out.println("\n[RECEIVED @ " + routerId + "] from " + srcMAC +
-                    " (" + srcIP + " -> " + destIP + "): " + message);
-        } else {
-            System.out.println("\n[DEBUG] Message Ignored. dstMAC=" + destMAC + ", myMAC=" + routerId +
-                    " | srcMAC=" + srcMAC + " srcVIP=" + srcIP + " dstVIP=" + destIP);
+        String srcSubnet = srcIP.split("\\.")[0];
+        String dstSubnet = destIP.split("\\.")[0];
+
+        if (srcSubnet.equals(dstSubnet)) {
+            System.out.println("\n[DEBUG] Router " + routerId + " received same-subnet traffic (" + srcSubnet + "); ignoring.");
+            return;
+        }
+
+        ForwardingEntry entry = forwardingTable.get(dstSubnet);
+        if (entry == null) {
+            System.out.println("\n[DEBUG] No forwarding-table entry for subnet: " + dstSubnet + " (destIP=" + destIP + ")");
+            return;
         }
 
         String nextHopId;
@@ -108,6 +115,18 @@ public class Router {
         else {
             nextHopId = extractHostFromIP(entry.nextHopVirtualIP);
             outgoingAddress = neighbors.get(nextHopId);
+        }
+
+        if (nextHopId == null) {
+            System.out.println("\n[DEBUG] Could not extract nextHopId. destIP=" + destIP +
+                    " nextHopVIP=" + entry.nextHopVirtualIP);
+            return;
+        }
+
+        if (outgoingAddress == null) {
+            System.out.println("\n[DEBUG] No neighbor address for next hop. nextHopId=" + nextHopId +
+                    " exitPortNeighborId=" + entry.exitPortNeighborId);
+            return;
         }
 
         String newSrcMAC = routerId;
@@ -150,7 +169,9 @@ public class Router {
 
     private String extractHostFromIP(String virtualIP) {
         // net2.R2 -> R2
-        return virtualIP.split("\\.")[1];
+        String[] p = virtualIP.split("\\.");
+        if (p.length != 2) return null;
+        return p[1];
     }
 
 

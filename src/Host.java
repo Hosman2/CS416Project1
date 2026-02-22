@@ -59,7 +59,21 @@ public class Host {
 
                 if (msg.contains(":")) msg = msg.replace(":", "_");
 
-                String frame = hostId + ":" + gatewayMac + ":" + myVirtualIp + ":" + dstVip + ":" + msg;
+                String mySubnet = myVirtualIp.split("\\.")[0];
+                String dstSubnet = dstVip.split("\\.")[0];
+
+                String dstMac;
+                if (mySubnet.equals(dstSubnet)) {
+                    // Same subnet: send directly to destination host MAC (ID)
+                    dstMac = extractIdFromVirtualIp(dstVip);
+                    System.out.println("[DEBUG] Same subnet (" + mySubnet + "): dstMAC=" + dstMac);
+                } else {
+                    // Different subnet: send to gateway router MAC
+                    dstMac = gatewayMac;
+                    System.out.println("[DEBUG] Different subnet (" + mySubnet + " -> " + dstSubnet + "): dstMAC=" + dstMac);
+                }
+
+                String frame = hostId + ":" + dstMac + ":" + myVirtualIp + ":" + dstVip + ":" + msg;
                 sendFrameToSwitch(frame);
 
             } catch (Exception e) {
@@ -67,6 +81,13 @@ public class Host {
             }
         }
         sc.close();
+
+    }
+
+    private static String getSubnet(String virtualIp) {
+        int dot = virtualIp.indexOf('.');
+        if (dot < 0) return virtualIp; // fallback
+        return virtualIp.substring(0, dot);
     }
 
     private void receiveLoop() {
@@ -99,15 +120,15 @@ public class Host {
         String dstVip = parts[3];
         String payload = parts[4];
 
-        if (dstMac.equals(hostId)) {
-            System.out.println("\n[RECEIVED @ " + hostId + "] from " + srcMac +
-                    " (" + srcVip + " -> " + dstVip + "): " + payload);
-        } else {
-            System.out.println("\n[DEBUG] Flooded frame not for me. dstMAC=" + dstMac + ", myMAC=" + hostId +
-                    " | srcMAC=" + srcMac + " srcVIP=" + srcVip + " dstVIP=" + dstVip);
+            if (dstMac.equals(hostId)) {
+                System.out.println("\n[RECEIVED @ " + hostId + "] from " + srcMac +
+                        " (" + srcVip + " -> " + dstVip + "): " + payload);
+            } else {
+                System.out.println("\n[DEBUG] Flooded frame not for me. dstMAC=" + dstMac + ", myMAC=" + hostId +
+                        " | srcMAC=" + srcMac + " srcVIP=" + srcVip + " dstVIP=" + dstVip);
+            }
+            System.out.println();
         }
-        System.out.println();
-    }
 
     private void sendFrameToSwitch(String frame) throws Exception {
         byte[] data = frame.getBytes(StandardCharsets.UTF_8);
