@@ -98,8 +98,6 @@ public class Switch {
                 target.getAddress(),
                 target.getPort()
         );
-        System.out.println(target.getAddress());
-        System.out.println(target.getPort());
         socket.send(packet);
     }
 
