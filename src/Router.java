@@ -12,6 +12,10 @@ public class Router {
 
     private Map<String, ForwardingEntry> forwardingTable = new HashMap<>();
 
+    // Link-state structures
+    private Map<String, Set<String>> topology = new HashMap<>();
+    private Set<String> seenLSAs = new HashSet<>();
+
     private static class ForwardingEntry {
         String exitPortNeighborId;
         String nextHopVirtualIP;
@@ -26,29 +30,14 @@ public class Router {
         this.routerId = routerId;
         this.myPort = myPort;
         this.socket = new DatagramSocket(myPort);
-
-        loadForwardingTable();
-    }
-
-
-    private void loadForwardingTable() {
-
-        if (routerId.equals("R1")) {
-            forwardingTable.put("net1", new ForwardingEntry("S1", null));
-            forwardingTable.put("net2", new ForwardingEntry("R2", null));
-            forwardingTable.put("net3", new ForwardingEntry(null, "net2.R2"));
-        }
-
-        if (routerId.equals("R2")) {
-            forwardingTable.put("net3", new ForwardingEntry("S2", null));
-            forwardingTable.put("net2", new ForwardingEntry("R1", null));
-            forwardingTable.put("net1", new ForwardingEntry(null, "net2.R1"));
-        }
     }
 
     public void start() throws Exception {
 
         System.out.println("Router " + routerId + " started...");
+
+        // Send initial LSA
+        sendInitialLSA();
 
         while (true) {
 
@@ -62,32 +51,31 @@ public class Router {
         }
     }
 
-
     private void processFrame(String frame) throws Exception {
 
-        String[] parts = frame.split(":", 5);
-        if (parts.length != 5) {
-            System.out.println("\n[DEBUG] Malformed frame (expected 5 fields): " + frame);
+        String[] parts = frame.split(":", 6);
+        if (parts.length < 6) {
+            System.out.println("[DEBUG] Malformed frame: " + frame);
             return;
         }
 
-        String srcMAC = parts[0];
-        String destMAC = parts[1];
-        String srcIP = parts[2];
-        String destIP = parts[3];
-        String message = parts[4];
+        String flag = parts[0];
+        String srcMAC = parts[1];
+        String destMAC = parts[2];
+        String srcIP = parts[3];
+        String destIP = parts[4];
+        String message = parts[5];
+
+        // Routing packet (LSA)
+        if (flag.equals("1")) {
+            processLSA(message, srcMAC);
+            return;
+        }
 
         System.out.println("\nRouter " + routerId + " RECEIVED:");
         printFrame(srcMAC, destMAC, srcIP, destIP, message);
 
-        // Ignore flooded frames not addressed to this router
         if (!destMAC.equals(routerId)) {
-            System.out.println("\n[DEBUG] Router " + routerId + " ignoring flooded frame dstMAC=" + destMAC);
-            return;
-        }
-
-        if (!srcIP.contains(".") || !destIP.contains(".")) {
-            System.out.println("\n[DEBUG] Invalid VIP format. srcIP=" + srcIP + " destIP=" + destIP);
             return;
         }
 
@@ -95,55 +83,124 @@ public class Router {
         String dstSubnet = destIP.split("\\.")[0];
 
         if (srcSubnet.equals(dstSubnet)) {
-            System.out.println("\n[DEBUG] Router " + routerId + " received same-subnet traffic (" + srcSubnet + "); ignoring.");
             return;
         }
 
         ForwardingEntry entry = forwardingTable.get(dstSubnet);
         if (entry == null) {
-            System.out.println("\n[DEBUG] No forwarding-table entry for subnet: " + dstSubnet + " (destIP=" + destIP + ")");
+            System.out.println("[DEBUG] No route to " + dstSubnet);
             return;
         }
 
-        String nextHopId;
-        InetSocketAddress outgoingAddress;
-
-        if (entry.nextHopVirtualIP == null) {
-            nextHopId = extractHostFromIP(destIP); // send directly to host
-            outgoingAddress = neighbors.get(entry.exitPortNeighborId);
-        }
-        else {
-            nextHopId = extractHostFromIP(entry.nextHopVirtualIP);
-            outgoingAddress = neighbors.get(nextHopId);
-        }
-
-        if (nextHopId == null) {
-            System.out.println("\n[DEBUG] Could not extract nextHopId. destIP=" + destIP +
-                    " nextHopVIP=" + entry.nextHopVirtualIP);
-            return;
-        }
+        String nextHopId = entry.exitPortNeighborId;
+        InetSocketAddress outgoingAddress = neighbors.get(nextHopId);
 
         if (outgoingAddress == null) {
-            System.out.println("\n[DEBUG] No neighbor address for next hop. nextHopId=" + nextHopId +
-                    " exitPortNeighborId=" + entry.exitPortNeighborId);
+            System.out.println("[DEBUG] No neighbor for " + nextHopId);
             return;
         }
 
-        String newSrcMAC = routerId;
-        String newDestMAC = nextHopId;
-
-        String newFrame = newSrcMAC + ":" +
-                newDestMAC + ":" +
-                srcIP + ":" +
-                destIP + ":" +
-                message;
+        String newFrame = "0:" + routerId + ":" + nextHopId + ":" +
+                srcIP + ":" + destIP + ":" + message;
 
         System.out.println("Router " + routerId + " FORWARDING:");
-        printFrame(newSrcMAC, newDestMAC, srcIP, destIP, message);
+        printFrame(routerId, nextHopId, srcIP, destIP, message);
 
         sendFrame(newFrame, outgoingAddress);
     }
 
+    // ===================== LINK STATE =====================
+
+    private void sendInitialLSA() throws Exception {
+        String neighborList = String.join(",", neighbors.keySet());
+        String message = routerId + ":" + neighborList;
+
+        topology.put(routerId, new HashSet<>(neighbors.keySet()));
+
+        floodLSA(message, null);
+    }
+
+    private void processLSA(String message, String sender) throws Exception {
+
+        if (seenLSAs.contains(message)) return;
+        seenLSAs.add(message);
+
+        String[] parts = message.split(":");
+        String router = parts[0];
+        String[] neighborList = parts[1].split(",");
+
+        topology.put(router, new HashSet<>(Arrays.asList(neighborList)));
+
+        floodLSA(message, sender);
+
+        runDijkstra();
+    }
+
+    private void floodLSA(String message, String sender) throws Exception {
+        for (String neighbor : neighbors.keySet()) {
+            if (sender != null && neighbor.equals(sender)) continue;
+
+            String frame = "1:" + routerId + ":" + neighbor + ":::" + message;
+            sendFrame(frame, neighbors.get(neighbor));
+        }
+    }
+
+    private void runDijkstra() {
+
+        Map<String, Integer> dist = new HashMap<>();
+        Map<String, String> prev = new HashMap<>();
+
+        for (String node : topology.keySet()) {
+            dist.put(node, Integer.MAX_VALUE);
+        }
+
+        dist.put(routerId, 0);
+
+        PriorityQueue<String> pq = new PriorityQueue<>(Comparator.comparingInt(dist::get));
+        pq.add(routerId);
+
+        while (!pq.isEmpty()) {
+            String current = pq.poll();
+
+            for (String neighbor : topology.getOrDefault(current, new HashSet<>())) {
+
+                int alt = dist.get(current) + 1;
+
+                if (alt < dist.getOrDefault(neighbor, Integer.MAX_VALUE)) {
+                    dist.put(neighbor, alt);
+                    prev.put(neighbor, current);
+                    pq.add(neighbor);
+                }
+            }
+        }
+
+        buildForwardingTable(prev);
+    }
+
+    private void buildForwardingTable(Map<String, String> prev) {
+
+        forwardingTable.clear();
+
+        for (String dest : prev.keySet()) {
+
+            String nextHop = dest;
+
+            while (prev.containsKey(nextHop) && !prev.get(nextHop).equals(routerId)) {
+                nextHop = prev.get(nextHop);
+            }
+
+            if (prev.containsKey(nextHop)) {
+                forwardingTable.put(dest, new ForwardingEntry(nextHop, null));
+            }
+        }
+
+        System.out.println("\n[DEBUG] Updated Forwarding Table:");
+        for (String dest : forwardingTable.keySet()) {
+            System.out.println(dest + " -> " + forwardingTable.get(dest).exitPortNeighborId);
+        }
+    }
+
+    // ===================== UTIL =====================
 
     private void sendFrame(String frame, InetSocketAddress address) throws Exception {
 
@@ -167,19 +224,10 @@ public class Router {
         System.out.println("Message: " + message);
     }
 
-    private String extractHostFromIP(String virtualIP) {
-        // net2.R2 -> R2
-        String[] p = virtualIP.split("\\.");
-        if (p.length != 2) return null;
-        return p[1];
-    }
-
-
     public void addNeighbor(String neighborId, String ip, int port) {
         neighbors.put(neighborId,
                 new InetSocketAddress(ip, port));
     }
-
 
     public static void main(String[] args) throws Exception {
 
@@ -200,7 +248,6 @@ public class Router {
 
         Router router = new Router(id, myAddr.getPort());
 
-        // Add neighbors from parser
         for (String neighborId : parser.getNeighborIds(id)) {
             InetSocketAddress addr = parser.getAddress(neighborId);
             router.addNeighbor(neighborId,
