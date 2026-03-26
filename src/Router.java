@@ -16,6 +16,9 @@ public class Router {
     private Map<String, Set<String>> topology = new HashMap<>();
     private Set<String> seenLSAs = new HashSet<>();
 
+    private Map<String, String> subnetToRouter = new HashMap<>();
+    private Set<String> mySubnets = new HashSet<>();
+
     private static class ForwardingEntry {
         String exitPortNeighborId;
         String nextHopVirtualIP;
@@ -86,7 +89,38 @@ public class Router {
             return;
         }
 
-        ForwardingEntry entry = forwardingTable.get(dstSubnet);
+        String destRouter = subnetToRouter.get(dstSubnet);
+
+        if (destRouter == null) {
+            System.out.println("[DEBUG] Unknown subnet " + dstSubnet);
+            return;
+        }
+
+        if (destRouter.equals(routerId)) {
+            System.out.println("[DEBUG] Packet reached destination subnet " + dstSubnet);
+
+            // Send toward host (final delivery)
+            String hostId = destIP.split("\\.")[1];  // "B" from net2.B
+
+            String newFrame = "0:" + routerId + ":" + hostId + ":" +
+                    srcIP + ":" + destIP + ":" + message;
+
+            System.out.println("Router " + routerId + " DELIVERING TO HOST:");
+            printFrame(routerId, hostId, srcIP, destIP, message);
+
+            // Send to ALL neighbors (switch will deliver to host)
+            for (InetSocketAddress neighborAddr : neighbors.values()) {
+                sendFrame(newFrame, neighborAddr);
+            }
+            return;
+        }
+
+        ForwardingEntry entry = forwardingTable.get(destRouter);
+
+        if (entry == null) {
+            System.out.println("[DEBUG] No route to router " + destRouter);
+            return;
+        }
         if (entry == null) {
             System.out.println("[DEBUG] No route to " + dstSubnet);
             return;
@@ -113,7 +147,9 @@ public class Router {
 
     private void sendInitialLSA() throws Exception {
         String neighborList = String.join(",", neighbors.keySet());
-        String message = routerId + ":" + neighborList;
+        String subnetList = String.join(",", mySubnets);
+
+        String message = routerId + ":" + subnetList + ":" + neighborList;
 
         topology.put(routerId, new HashSet<>(neighbors.keySet()));
 
@@ -126,8 +162,14 @@ public class Router {
         seenLSAs.add(message);
 
         String[] parts = message.split(":");
+
         String router = parts[0];
-        String[] neighborList = parts[1].split(",");
+        String[] subnets = parts[1].split(",");
+        String[] neighborList = parts[2].split(",");
+
+        for (String subnet : subnets) {
+            subnetToRouter.put(subnet, router);
+        }
 
         topology.put(router, new HashSet<>(Arrays.asList(neighborList)));
 
@@ -253,6 +295,14 @@ public class Router {
             router.addNeighbor(neighborId,
                     addr.getAddress().getHostAddress(),
                     addr.getPort());
+        }
+        List<String> interfaces = parser.getVirtualIps(id);
+
+        for (String iface : interfaces) {
+            String subnet = iface.split("\\.")[0];  // "net1" from "net1.R1"
+
+            router.mySubnets.add(subnet);
+            router.subnetToRouter.put(subnet, id);
         }
 
         router.start();

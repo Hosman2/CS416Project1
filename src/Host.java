@@ -25,6 +25,8 @@ public class Host {
         this.gatewayVirtualIp = gatewayVirtualIp;
         this.gatewayMac = extractIdFromVirtualIp(gatewayVirtualIp);
 
+        System.out.println("[DEBUG] gatewayMac = " + gatewayMac);
+
         System.out.println("Host " + hostId + " listening on " + listenPort);
         System.out.println("Connected switch: " + neighborSwitch.getAddress().getHostAddress() +
                 ":" + neighborSwitch.getPort());
@@ -73,7 +75,8 @@ public class Host {
                     System.out.println("[DEBUG] Different subnet (" + mySubnet + " -> " + dstSubnet + "): dstMAC=" + dstMac);
                 }
 
-                String frame = hostId + ":" + dstMac + ":" + myVirtualIp + ":" + dstVip + ":" + msg;
+                String frame = "0:" + hostId + ":" + dstMac + ":" + myVirtualIp + ":" + dstVip + ":" + msg;
+                System.out.println("[DEBUG SEND] " + frame);
                 sendFrameToSwitch(frame);
 
             } catch (Exception e) {
@@ -108,25 +111,32 @@ public class Host {
 
     private void handleIncomingFrame(String frame) {
         //Frame format: srcMAC:dstMAC:srcVIP:dstVIP:message
-        String[] parts = frame.split(":", 5);
-        if (parts.length != 5) {
-            System.out.println("\n[DEBUG] Malformed frame (expected 5 fields): " + frame);
+        String[] parts = frame.split(":", 6);
+
+        if (parts.length < 6) {
+            System.out.println("[DEBUG] Malformed frame: " + frame);
             return;
         }
 
-        String srcMac = parts[0];
-        String dstMac = parts[1];
-        String srcVip = parts[2];
-        String dstVip = parts[3];
-        String payload = parts[4];
+        String flag = parts[0];
+        String srcMac = parts[1];
+        String dstMac = parts[2];
+        String srcVip = parts[3];
+        String dstVip = parts[4];
+        String payload = parts[5];
 
-            if (dstMac.equals(hostId)) {
-                System.out.println("\n[RECEIVED @ " + hostId + "] from " + srcMac +
-                        " (" + srcVip + " -> " + dstVip + "): " + payload);
-            } else {
-                System.out.println("\n[DEBUG] Flooded frame not for me. dstMAC=" + dstMac + ", myMAC=" + hostId +
-                        " | srcMAC=" + srcMac + " srcVIP=" + srcVip + " dstVIP=" + dstVip);
-            }
+        if (flag.equals("1")) {
+            // Ignore routing packets
+            return;
+        }
+
+        if (dstMac.equals(hostId)) {
+            System.out.println("\n[RECEIVED @ " + hostId + "] from " + srcMac +
+                    " (" + srcVip + " -> " + dstVip + "): " + payload);
+        } else {
+            System.out.println("\n[DEBUG] Flooded frame not for me. dstMAC=" + dstMac + ", myMAC=" + hostId +
+                    " | srcMAC=" + srcMac + " srcVIP=" + srcVip + " dstVIP=" + dstVip);
+        }
             System.out.println();
         }
 

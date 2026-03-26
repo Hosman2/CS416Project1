@@ -57,11 +57,12 @@ public class Switch {
     //Ethernet Learning Switch Logic
     private void handleFrame(String frame, InetSocketAddress incomingPort) throws Exception {
         // Frame format: srcMAC:dstMAC:payload
-        String[] parts = frame.split(":", 3);
-        if (parts.length != 3) return;
+        String[] parts = frame.split(":", 6);
+        if (parts.length < 6) return;
 
-        String srcMac = parts[0];
-        String dstMac = parts[1];
+        String flag = parts[0];
+        String srcMac = parts[1];
+        String dstMac = parts[2];
 
         if (!switchTable.containsKey(srcMac)) {
             switchTable.put(srcMac, incomingPort);
