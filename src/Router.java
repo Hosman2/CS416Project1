@@ -14,10 +14,10 @@ public class Router {
 
     // Link-state structures
     private Map<String, Set<String>> topology = new HashMap<>();
-    private Set<String> seenLSAs = new HashSet<>();
-
+    private Map<String, String> lsaDatabase = new HashMap<>();
     private Map<String, String> subnetToRouter = new HashMap<>();
     private Set<String> mySubnets = new HashSet<>();
+    private String myLSA = "";
 
     private static class ForwardingEntry {
         String exitPortNeighborId;
@@ -41,15 +41,28 @@ public class Router {
 
         // Send initial LSA
         sendInitialLSA();
+        floodLSA(myLSA, null);
+
+        Thread lsaThread = new Thread(() -> {
+            while (true) {
+                try {
+                    floodAllKnownLSAs();
+                    Thread.sleep(1000);
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+            }
+        });
+
+        lsaThread.setDaemon(true);
+
+        lsaThread.start();
 
         while (true) {
-
             byte[] buffer = new byte[1024];
             DatagramPacket packet = new DatagramPacket(buffer, buffer.length);
             socket.receive(packet);
-
-            String frame = new String(packet.getData(), 0, packet.getLength());
-
+            String frame = new String(packet.getData(), 0, packet.getLength()).trim();
             processFrame(frame);
         }
     }
@@ -75,19 +88,14 @@ public class Router {
             return;
         }
 
-        System.out.println("\nRouter " + routerId + " RECEIVED:");
-        printFrame(srcMAC, destMAC, srcIP, destIP, message);
-
         if (!destMAC.equals(routerId)) {
             return;
         }
 
-        String srcSubnet = srcIP.split("\\.")[0];
-        String dstSubnet = destIP.split("\\.")[0];
+        System.out.println("\nRouter " + routerId + " RECEIVED:");
+        printFrame(srcMAC, destMAC, srcIP, destIP, message);
 
-        if (srcSubnet.equals(dstSubnet)) {
-            return;
-        }
+        String dstSubnet = destIP.split("\\.")[0];
 
         String destRouter = subnetToRouter.get(dstSubnet);
 
@@ -97,21 +105,29 @@ public class Router {
         }
 
         if (destRouter.equals(routerId)) {
-            System.out.println("[DEBUG] Packet reached destination subnet " + dstSubnet);
-
             // Send toward host (final delivery)
             String hostId = destIP.split("\\.")[1];  // "B" from net2.B
 
             String newFrame = "0:" + routerId + ":" + hostId + ":" +
                     srcIP + ":" + destIP + ":" + message;
 
+            InetSocketAddress lanNeighbor = null;
+            for (String neighborId : neighbors.keySet()) {
+                if (neighborId.startsWith("S")) {
+                    lanNeighbor = neighbors.get(neighborId);
+                    break;
+                }
+            }
+
+            if (lanNeighbor == null) {
+                System.out.println("[DEBUG] No local switch for final delivery");
+                return;
+            }
+
             System.out.println("Router " + routerId + " DELIVERING TO HOST:");
             printFrame(routerId, hostId, srcIP, destIP, message);
 
-            // Send to ALL neighbors (switch will deliver to host)
-            for (InetSocketAddress neighborAddr : neighbors.values()) {
-                sendFrame(newFrame, neighborAddr);
-            }
+            sendFrame(newFrame, lanNeighbor);
             return;
         }
 
@@ -119,10 +135,6 @@ public class Router {
 
         if (entry == null) {
             System.out.println("[DEBUG] No route to router " + destRouter);
-            return;
-        }
-        if (entry == null) {
-            System.out.println("[DEBUG] No route to " + dstSubnet);
             return;
         }
 
@@ -146,44 +158,81 @@ public class Router {
     // ===================== LINK STATE =====================
 
     private void sendInitialLSA() throws Exception {
-        String neighborList = String.join(",", neighbors.keySet());
+        List<String> routerNeighbors = new ArrayList<>();
+        for (String neighborId : neighbors.keySet()) {
+            if (neighborId.startsWith("R")) {
+                routerNeighbors.add(neighborId);
+            }
+        }
+
         String subnetList = String.join(",", mySubnets);
-
-        String message = routerId + ":" + subnetList + ":" + neighborList;
-
-        topology.put(routerId, new HashSet<>(neighbors.keySet()));
-
-        floodLSA(message, null);
+        String neighborList = String.join(",", routerNeighbors);
+        myLSA = routerId + ":" + subnetList + ":" + neighborList;
+        topology.put(routerId, new HashSet<>(routerNeighbors));
+        lsaDatabase.put(routerId, myLSA);
+        runDijkstra();
     }
 
     private void processLSA(String message, String sender) throws Exception {
 
-        if (seenLSAs.contains(message)) return;
-        seenLSAs.add(message);
+        String[] parts = message.split(":", -1);
 
-        String[] parts = message.split(":");
+        if (parts.length < 3) {
+            System.out.println("[DEBUG] Malformed LSA: " + message);
+            return;
+        }
 
         String router = parts[0];
-        String[] subnets = parts[1].split(",");
-        String[] neighborList = parts[2].split(",");
+
+        String old = lsaDatabase.get(router);
+        if (message.equals(old)) {
+            return;
+        }
+
+        lsaDatabase.put(router, message);
+
+        String[] subnets = parts[1].isEmpty() ? new String[0] : parts[1].split(",");
+        String[] neighborList = parts[2].isEmpty() ? new String[0] : parts[2].split(",");
 
         for (String subnet : subnets) {
             subnetToRouter.put(subnet, router);
         }
 
-        topology.put(router, new HashSet<>(Arrays.asList(neighborList)));
+        Set<String> routerNeighbors = new HashSet<>();
+        for (String neighborId : neighborList) {
+            if (neighborId.startsWith("R")) {
+                routerNeighbors.add(neighborId);
+            }
+        }
+
+        topology.put(router, routerNeighbors);
 
         floodLSA(message, sender);
+
+        System.out.println("[DEBUG] " + routerId + " learned LSA from " + router +
+                " subnets=" + Arrays.toString(subnets) +
+                " neighbors=" + Arrays.toString(neighborList));
 
         runDijkstra();
     }
 
     private void floodLSA(String message, String sender) throws Exception {
         for (String neighbor : neighbors.keySet()) {
+
+            if (!neighbor.startsWith("R")) {
+                continue;
+            }
+
             if (sender != null && neighbor.equals(sender)) continue;
 
             String frame = "1:" + routerId + ":" + neighbor + ":::" + message;
             sendFrame(frame, neighbors.get(neighbor));
+        }
+    }
+
+    private void floodAllKnownLSAs() throws Exception {
+        for (String lsaMessage : lsaDatabase.values()) {
+            floodLSA(lsaMessage, null);
         }
     }
 
@@ -204,7 +253,7 @@ public class Router {
         while (!pq.isEmpty()) {
             String current = pq.poll();
 
-            for (String neighbor : topology.getOrDefault(current, new HashSet<>())) {
+            for (String neighbor : topology.getOrDefault(current, Collections.emptySet())) {
 
                 int alt = dist.get(current) + 1;
 
@@ -236,7 +285,7 @@ public class Router {
             }
         }
 
-        System.out.println("\n[DEBUG] Updated Forwarding Table:");
+        System.out.println("\n[DEBUG] Updated Forwarding Table for " + routerId + ":");
         for (String dest : forwardingTable.keySet()) {
             System.out.println(dest + " -> " + forwardingTable.get(dest).exitPortNeighborId);
         }
